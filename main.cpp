@@ -398,7 +398,7 @@ void TestRejectionSampling()
     }
 }
 
-int main(int argc, char **argv)
+int main2(int argc, char **argv)
 {
     // TODO: uncomment
     //TestRejectionSampling<PDF::Y_Equals_X>();
