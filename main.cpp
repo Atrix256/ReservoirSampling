@@ -436,6 +436,45 @@ int main2(int argc, char **argv)
 
 /*
 
+================= REFOCUSING - WHAT ARE WE DOING? ==================
+
+? can we make correlation / anti correlation be part of the output results in either of these somehow?
+
+----- unweighted reservoir sampling.  take N samples with even chance from a larger stream
+
+* the output should have the same PDF as the input i think.
+* use LDS to make sure this is true
+* could do the tests multiple times and take average / std dev of it.
+* different techniques like imperfect memory
+
+----- weighted reservoir sampling. take N samples with weighted chance from a larger stream. also: convert a stream of a PDF to another (maybe not the best algorithm though)
+
+? what is this used for. i could see it like "take 10 lights from this list of 100000 lights"
+
+* vanilla tests...
+ * vanilla can only generate a small number of samples from a source.
+ * run the test N times and look at error and variance of error.
+ * use LDS as a rng and do it again
+ * use LDS as input stream and do it again
+ * use LDS as both rng and input stream and do it again
+ * try a couple different PDFs as input and output?
+
+* imperfect memory to get higher acceptance rate
+ * your constant weight sum idea?
+ * marcos idea
+ * a couple different PDFs as input and output
+ * LDS involved
+
+? how does this idea compare conceptually to rejection sampling or russian roulette?
+? do we really want N items selected? or do we want to spit out a stream of output for a given input?
+! this may not be the best way to launder PDFs
+
+====================================================================
+
+
+
+
+
 ! marcos technique. include it in the analysis
 
 
