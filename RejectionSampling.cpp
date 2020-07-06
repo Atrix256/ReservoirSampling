@@ -383,6 +383,49 @@ void SaveTestReport(const std::vector<TestReport>& testReports, const char* base
     }
 }
 
+template <typename PDF>
+std::vector<float> RejectionSample(const std::vector<Vec2>& inputAndRngStream, TestReport& report, int testIndex)
+{
+    // rejection sample to convert input stream into desired PDF
+    std::vector<float> transformed;
+    for (size_t inputIndex = 0; inputIndex < inputAndRngStream.size(); ++inputIndex)
+    {
+        float x = inputAndRngStream[inputIndex][0];
+        if (inputAndRngStream[inputIndex][1] <PDF::PF(x))
+            transformed.push_back(x);
+
+        for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
+        {
+            if (inputIndex + 1 == c_reportValues[reportIndex])
+            {
+                float alpha = 1.0f / float(testIndex + 1);
+
+                // calculate the error of survival rate
+                float survivedPercent = float(transformed.size()) / float(c_reportValues[reportIndex]);
+                float survivedPercentExpected = PDF::CumulativePF(0.0f, 1.0f);
+                report.item[reportIndex].survivedError = survivedPercent - survivedPercentExpected;
+
+                // calculate the avg and squared avg of survival rate
+                report.item[reportIndex].survivedErrorAvg = Lerp(report.item[reportIndex].survivedErrorAvg, report.item[reportIndex].survivedError, alpha);
+                report.item[reportIndex].survivedErrorSqdAvg = Lerp(report.item[reportIndex].survivedErrorSqdAvg, report.item[reportIndex].survivedError*report.item[reportIndex].survivedError, alpha);
+
+                // calculate histogram
+                MakeHistogram(transformed, transformed.size(), report.item[reportIndex].outputHistogram);
+
+                // calculate the avg and squared avg of histograms
+                for (size_t histogramIndex = 0; histogramIndex < c_numHistogramBuckets; ++histogramIndex)
+                {
+                    report.item[reportIndex].outputHistogramAvg[histogramIndex] = Lerp(report.item[reportIndex].outputHistogramAvg[histogramIndex], report.item[reportIndex].outputHistogram[histogramIndex], alpha);
+                    report.item[reportIndex].outputHistogramSqdAvg[histogramIndex] = Lerp(report.item[reportIndex].outputHistogramSqdAvg[histogramIndex], report.item[reportIndex].outputHistogram[histogramIndex] * report.item[reportIndex].outputHistogram[histogramIndex], alpha);
+                }
+
+                break;
+            }
+        }
+    }
+    return transformed;
+}
+
 // ===================================== Program =====================================
 
 int main(int argc, char** argv)
@@ -490,43 +533,8 @@ int main(int argc, char** argv)
                     }
                 }
 
-                // rejection sample to convert input stream into desired PDF
-                std::vector<float> transformed;
-                for (size_t inputIndex = 0; inputIndex < inputAndRngStream.size(); ++inputIndex)
-                {
-                    float x = inputAndRngStream[inputIndex][0];
-                    if (inputAndRngStream[inputIndex][1] < PDF::Y_Eq_X_P_0_1::PF(x))
-                        transformed.push_back(x);
-
-                    for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
-                    {
-                        if (inputIndex + 1 == c_reportValues[reportIndex])
-                        {
-                            float alpha = 1.0f / float(testIndex + 1);
-
-                            // calculate the error of survival rate
-                            float survivedPercent = float(transformed.size()) / float(c_reportValues[reportIndex]);
-                            float survivedPercentExpected = PDF::Y_Eq_X_P_0_1::CumulativePF(0.0f, 1.0f);
-                            report.item[reportIndex].survivedError = survivedPercent - survivedPercentExpected;
-
-                            // calculate the avg and squared avg of survival rate
-                            report.item[reportIndex].survivedErrorAvg = Lerp(report.item[reportIndex].survivedErrorAvg, report.item[reportIndex].survivedError, alpha);
-                            report.item[reportIndex].survivedErrorSqdAvg = Lerp(report.item[reportIndex].survivedErrorSqdAvg, report.item[reportIndex].survivedError*report.item[reportIndex].survivedError, alpha);
-
-                            // calculate histogram
-                            MakeHistogram(transformed, transformed.size(), report.item[reportIndex].outputHistogram);
-
-                            // calculate the avg and squared avg of histograms
-                            for (size_t histogramIndex = 0; histogramIndex < c_numHistogramBuckets; ++histogramIndex)
-                            {
-                                report.item[reportIndex].outputHistogramAvg[histogramIndex] = Lerp(report.item[reportIndex].outputHistogramAvg[histogramIndex], report.item[reportIndex].outputHistogram[histogramIndex], alpha);
-                                report.item[reportIndex].outputHistogramSqdAvg[histogramIndex] = Lerp(report.item[reportIndex].outputHistogramSqdAvg[histogramIndex], report.item[reportIndex].outputHistogram[histogramIndex] * report.item[reportIndex].outputHistogram[histogramIndex], alpha);
-                            }
-
-                            break;
-                        }
-                    }
-                }
+                // Do rejection sampling to convert from uniform to y=x+0.1
+                std::vector<float> transformed = RejectionSample<PDF::Y_Eq_X_P_0_1>(inputAndRngStream, report, testIndex);
             }
         }
         printf("\r100%%\n\n");
