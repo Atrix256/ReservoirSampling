@@ -384,14 +384,14 @@ void SaveTestReport(const std::vector<TestReport>& testReports, const char* base
 }
 
 template <typename PDF>
-std::vector<float> RejectionSample(const std::vector<Vec2>& inputAndRngStream, TestReport& report, int testIndex)
+std::vector<float> RejectionSample(const std::vector<float>& inputStream, const std::vector<float>& rngStream, TestReport& report, int testIndex)
 {
     // rejection sample to convert input stream into desired PDF
     std::vector<float> transformed;
-    for (size_t inputIndex = 0; inputIndex < inputAndRngStream.size(); ++inputIndex)
+    for (size_t inputIndex = 0; inputIndex < inputStream.size(); ++inputIndex)
     {
-        float x = inputAndRngStream[inputIndex][0];
-        if (inputAndRngStream[inputIndex][1] <PDF::PF(x))
+        float x = inputStream[inputIndex];
+        if (rngStream[inputIndex] < PDF::PF(x))
             transformed.push_back(x);
 
         for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
@@ -426,6 +426,96 @@ std::vector<float> RejectionSample(const std::vector<Vec2>& inputAndRngStream, T
     return transformed;
 }
 
+enum ESequenceType : int
+{
+    WhiteWhite,
+    GRWhite,
+    WhiteSqrt2,
+    GRSqrt2,
+    SeqR2,
+    SeqSobol,
+
+    Count
+};
+
+void GenerateSequence(std::vector<float>& inputStream, std::vector<float>& rngStream, size_t numValues, ESequenceType sequenceType, std::mt19937& rng, TestReport& report, Vec2& LDSOffset)
+{
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+ 
+    inputStream.resize(numValues);
+    rngStream.resize(numValues);
+
+    if (sequenceType == ESequenceType::SeqSobol)
+    {
+        report.inputStreamType = "Sobol";
+        report.rngStreamType = "Sobol";
+
+        std::vector<Vec2> inputAndRngStream(numValues);
+        Sobol(inputAndRngStream, numValues);
+
+        for (Vec2& f : inputAndRngStream)
+        {
+            f[0] = fract(f[0] + LDSOffset[0]);
+            f[1] = fract(f[1] + LDSOffset[1]);
+        }
+
+        for (size_t index = 0; index < numValues; ++index)
+        {
+            inputStream[index] = inputAndRngStream[index][0];
+            rngStream[index] = inputAndRngStream[index][1];
+        }
+
+    }
+    else if (sequenceType == ESequenceType::SeqR2)
+    {
+        report.inputStreamType = "R2";
+        report.rngStreamType = "R2";
+
+        for (size_t index = 0; index < numValues; ++index)
+        {
+            LDSOffset = R2(LDSOffset);
+            inputStream[index] = LDSOffset[0];
+            rngStream[index] = LDSOffset[1];
+        }
+    }
+    else
+    {
+        // make uniform input samples - either white noise or LDS
+        if ((sequenceType & 1) == 0)
+        {
+            report.inputStreamType = "white";
+            for (float& f : inputStream)
+                f = dist(rng);
+        }
+        else
+        {
+            report.inputStreamType = "GR";
+            for (float& f : inputStream)
+            {
+                LDSOffset[0] = fract(LDSOffset[0] + c_goldenRatioConjugate);
+                f = LDSOffset[0];
+            }
+        }
+
+        // make uniform rng samples 0 either white noise or LDS
+        if (((sequenceType >> 1) & 1) == 0)
+        {
+            report.rngStreamType = "white";
+            for (float& f : rngStream)
+                f = dist(rng);
+        }
+        else
+        {
+            report.rngStreamType = "sqrt2";
+            for (float& f : rngStream)
+            {
+                LDSOffset[1] = fract(LDSOffset[1] + c_fractRoot2);
+                f = LDSOffset[1];
+            }
+        }
+    }
+}
+
 // ===================================== Program =====================================
 
 int main(int argc, char** argv)
@@ -434,9 +524,10 @@ int main(int argc, char** argv)
     {
         std::vector<TestReport> testReports;
 
+        int flatTestIndex = -1;
         int percent = 0;
         printf("Test 1: uniform to y=x+0.1\n");
-        for (int i = 0; i < 6; ++i)
+        for (int sequenceType = 0; sequenceType < ESequenceType::Count; ++sequenceType)
         {
             // get a test report to store data to report later
             testReports.emplace_back();
@@ -444,97 +535,28 @@ int main(int argc, char** argv)
 
             for (int testIndex = 0; testIndex < c_numTests; ++testIndex)
             {
+                flatTestIndex++;
+
                 // report percentage done
-                int newPercent = int(100.0f * float((i * c_numTests) + testIndex) / float(c_numTests * 6));
+                int newPercent = int(100.0f * float(flatTestIndex) / float(c_numTests * ESequenceType::Count));
                 if (percent != newPercent)
                     printf("\r%i%%", newPercent);
                 percent = newPercent;
 
                 // get white noise random number generator
-                std::mt19937 rng = GetRNG(i * c_numTests + testIndex);
+                std::mt19937 rng = GetRNG(flatTestIndex);
                 std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 
-                std::vector<Vec2> inputAndRngStream(c_maxReportValue);
-
-                if (i == 5) // Sobol
-                {
-                    report.inputStreamType = "Sobol";
-                    report.rngStreamType = "Sobol";
-
-                    Sobol(inputAndRngStream, c_maxReportValue);
-
-                    #if RANDOMIZE_LDS_START()
-                    Vec2 offset = Vec2{ dist(rng), dist(rng) };
-                    for (Vec2& f : inputAndRngStream)
-                    {
-                        f[0] = fract(f[0] + offset[0]);
-                        f[1] = fract(f[1] + offset[1]);
-                    }
-                    #endif
-                }
-                else if (i == 4) // R2
-                {
-                    report.inputStreamType = "R2";
-                    report.rngStreamType = "R2";
-
-                    Vec2 value = Vec2{ 0.0f, 0.0f };
-                    #if RANDOMIZE_LDS_START()
-                    value = Vec2{ dist(rng), dist(rng) };
-                    #endif
-
-                    for (Vec2& f : inputAndRngStream)
-                    {
-                        value = R2(value);
-                        f = value;
-                    }
-                }
-                else
-                {
-                    // make uniform input samples - either white noise or LDS
-                    if ((i & 1) == 0)
-                    {
-                        report.inputStreamType = "white";
-                        for (Vec2& f : inputAndRngStream)
-                            f[0] = dist(rng);
-                    }
-                    else
-                    {
-                        report.inputStreamType = "GR";
-                        float value = 0.0f;
-                        #if RANDOMIZE_LDS_START()
-                        value = dist(rng);
-                        #endif
-                        for (Vec2& f : inputAndRngStream)
-                        {
-                            value = fract(value + c_goldenRatioConjugate);
-                            f[0] = value;
-                        }
-                    }
-
-                    // make uniform rng samples 0 either white noise or LDS
-                    if (((i >> 1) & 1) == 0)
-                    {
-                        report.rngStreamType = "white";
-                        for (Vec2& f : inputAndRngStream)
-                            f[1] = dist(rng);
-                    }
-                    else
-                    {
-                        report.rngStreamType = "sqrt2";
-                        float value = 0.0f;
-                        #if RANDOMIZE_LDS_START()
-                        value = dist(rng);
-                        #endif
-                        for (Vec2& f : inputAndRngStream)
-                        {
-                            value = fract(value + c_fractRoot2);
-                            f[1] = value;
-                        }
-                    }
-                }
+                // Generate the input stream and rng stream
+                Vec2 LDSOffset = Vec2{ 0.0f, 0.0f };
+                #if RANDOMIZE_LDS_START()
+                LDSOffset = Vec2{ dist(rng), dist(rng) };
+                #endif
+                std::vector<float> inputStream, rngStream;
+                GenerateSequence(inputStream, rngStream, c_maxReportValue, (ESequenceType)sequenceType, rng, report, LDSOffset);
 
                 // Do rejection sampling to convert from uniform to y=x+0.1
-                std::vector<float> transformed = RejectionSample<PDF::Y_Eq_X_P_0_1>(inputAndRngStream, report, testIndex);
+                std::vector<float> transformed = RejectionSample<PDF::Y_Eq_X_P_0_1>(inputStream, rngStream, report, testIndex);
             }
         }
         printf("\r100%%\n\n");
@@ -542,6 +564,9 @@ int main(int argc, char** argv)
         // write out report CSVs
         SaveTestReport<PDF::Y_Eq_X_P_0_1>(testReports, "out/test1");
     }
+
+    // TODO: test 2 is to do a multi step PDF transformation
+    // TODO: test 3 is to combine the multiple steps into 1 to show survival rate etc
 
     system("pause");
     return 0;
