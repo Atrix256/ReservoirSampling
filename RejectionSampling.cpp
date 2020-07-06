@@ -3,8 +3,25 @@
 #include <array>
 #include <string>
 
+#define COUNT_OF(x) ((sizeof(x)/sizeof(0[x])) / ((size_t)(!(sizeof(x) % sizeof(0[x])))))
+
 #define DETERMINISTIC() true
 #define RANDOMIZE_LDS_START() true
+
+static const size_t c_numHistogramBuckets = 10;
+static const size_t c_numTests = 1000; // how many times to do the tests, to get average and std dev
+
+// what points in the input stream to dump a report
+static const size_t c_reportValues[] =
+{
+    100,
+    1000,
+    10000
+};
+static const size_t c_numReportValues = COUNT_OF(c_reportValues);
+static const size_t c_maxReportValue = c_reportValues[c_numReportValues - 1];
+
+// ===================================== Constants =====================================
 
 typedef std::array<float, 2> Vec2;
 
@@ -12,8 +29,6 @@ static const float c_goldenRatio = 1.61803398875f;
 static const float c_goldenRatioConjugate = 0.61803398875f;
 static const float c_root2 = 1.41421356237f;
 static const float c_fractRoot2 = 0.41421356237f;
-
-#define COUNT_OF(x) ((sizeof(x)/sizeof(0[x])) / ((size_t)(!(sizeof(x) % sizeof(0[x])))))
 
 // ===================================== PDFs =====================================
 
@@ -189,41 +204,189 @@ void Sobol(std::vector<Vec2>& values, size_t numValues)
     }
 }
 
+struct TestReportItem
+{
+    std::array<float, c_numHistogramBuckets> outputHistogram;
+    std::array<float, c_numHistogramBuckets> outputHistogramAvg;
+    std::array<float, c_numHistogramBuckets> outputHistogramSqdAvg;
+
+    float survivedError;
+    float survivedErrorAvg;
+    float survivedErrorSqdAvg;
+};
+
+struct TestReport
+{
+    std::array<TestReportItem, c_numReportValues> item;
+    std::string inputStreamType;
+    std::string rngStreamType;
+};
+
+template <typename PDF>
+void SaveTestReport(const std::vector<TestReport>& testReports, const char* baseFileName)
+{
+    char buffer[256];
+
+    // show the survival error
+    {
+        FILE* file = nullptr;
+        sprintf_s(buffer, "%s_survival.csv", baseFileName);
+        fopen_s(&file, buffer, "w+t");
+
+        // Show the error
+        {
+            fprintf(file, "\"Counts\"");
+            for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
+                fprintf(file, ",\"%zu\"", c_reportValues[reportIndex]);
+            fprintf(file, "\n");
+
+            for (const TestReport& report : testReports)
+            {
+                fprintf(file, "\"stream %s rng %s error\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
+                for (const TestReportItem& item : report.item)
+                    fprintf(file, ",\"%f\"", abs(item.survivedError));
+                fprintf(file, "\n");
+            }
+        }
+
+        // Show the average error
+        {
+            fprintf(file, "\n\"Average Error\"\n\n\"Counts\"");
+            for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
+                fprintf(file, ",\"%zu\"", c_reportValues[reportIndex]);
+            fprintf(file, "\n");
+
+            for (const TestReport& report : testReports)
+            {
+                fprintf(file, "\"stream %s rng %s error\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
+                for (const TestReportItem& item : report.item)
+                    fprintf(file, ",\"%f\"", abs(item.survivedErrorAvg));
+                fprintf(file, "\n");
+            }
+        }
+
+        // Show the error std dev
+        {
+            fprintf(file, "\n\"Error Std Dev\"\n\n\"Counts\"");
+            for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
+                fprintf(file, ",\"%zu\"", c_reportValues[reportIndex]);
+            fprintf(file, "\n");
+
+            for (const TestReport& report : testReports)
+            {
+                fprintf(file, "\"stream %s rng %s error\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
+                for (const TestReportItem& item : report.item)
+                {
+                    float variance = abs(item.survivedErrorSqdAvg - item.survivedErrorAvg * item.survivedErrorAvg);
+                    float stddev = sqrt(variance);
+                    fprintf(file, ",\"%f\"", stddev);
+                }
+                fprintf(file, "\n");
+            }
+        }
+
+        fclose(file);
+    }
+
+    // show the histograms
+    for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
+    {
+        FILE* file = nullptr;
+        sprintf_s(buffer, "%s_%i.csv", baseFileName, int(c_reportValues[reportIndex]));
+        fopen_s(&file, buffer, "w+t");
+
+        // show actual histogram
+        {
+            fprintf(file, "\"expected\"");
+            for (size_t histogramIndex = 0; histogramIndex < c_numHistogramBuckets; ++histogramIndex)
+            {
+                float x1 = float(histogramIndex) / float(c_numHistogramBuckets);
+                float x2 = float(histogramIndex + 1) / float(c_numHistogramBuckets);
+                float expected = PDF::CumulativePF(x1, x2) / PDF::CumulativePF(0.0f, 1.0f);
+
+                fprintf(file, ",\"%f\"", expected);
+            }
+            fprintf(file, "\n");
+
+            for (const TestReport& report : testReports)
+            {
+                fprintf(file, "\"stream %s rng %s\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
+                for (float f : report.item[reportIndex].outputHistogram)
+                    fprintf(file, ",\"%f\"", f);
+                fprintf(file, "\n");
+            }
+        }
+
+        // show histogram error
+        {
+            fprintf(file, "\n\"Error\"\n\n");
+
+            for (const TestReport& report : testReports)
+            {
+                fprintf(file, "\"stream %s rng %s\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
+                for (size_t histogramIndex = 0; histogramIndex < c_numHistogramBuckets; ++histogramIndex)
+                {
+                    float x1 = float(histogramIndex) / float(c_numHistogramBuckets);
+                    float x2 = float(histogramIndex + 1) / float(c_numHistogramBuckets);
+                    float expected = PDF::CumulativePF(x1, x2) / PDF::CumulativePF(0.0f, 1.0f);
+
+                    float f = report.item[reportIndex].outputHistogram[histogramIndex] - expected;
+                    fprintf(file, ",\"%f\"", f);
+                }
+                fprintf(file, "\n");
+            }
+        }
+
+        // show histogram average error
+        {
+            fprintf(file, "\n\"Average Error\"\n\n");
+
+            for (const TestReport& report : testReports)
+            {
+                fprintf(file, "\"stream %s rng %s\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
+                for (size_t histogramIndex = 0; histogramIndex < c_numHistogramBuckets; ++histogramIndex)
+                {
+                    float x1 = float(histogramIndex) / float(c_numHistogramBuckets);
+                    float x2 = float(histogramIndex + 1) / float(c_numHistogramBuckets);
+                    float expected = PDF::CumulativePF(x1, x2) / PDF::CumulativePF(0.0f, 1.0f);
+
+                    float f = report.item[reportIndex].outputHistogramAvg[histogramIndex] - expected;
+                    fprintf(file, ",\"%f\"", f);
+                }
+                fprintf(file, "\n");
+            }
+        }
+
+        // show histogram error std dev
+        {
+            fprintf(file, "\n\"Error Std Deviation\"\n\n");
+
+            for (const TestReport& report : testReports)
+            {
+                fprintf(file, "\"stream %s rng %s\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
+                for (size_t histogramIndex = 0; histogramIndex < c_numHistogramBuckets; ++histogramIndex)
+                {
+                    float x1 = float(histogramIndex) / float(c_numHistogramBuckets);
+                    float x2 = float(histogramIndex + 1) / float(c_numHistogramBuckets);
+                    float expected = PDF::CumulativePF(x1, x2) / PDF::CumulativePF(0.0f, 1.0f);
+
+                    float f = abs(report.item[reportIndex].outputHistogramSqdAvg[histogramIndex] - (report.item[reportIndex].outputHistogramAvg[histogramIndex] * report.item[reportIndex].outputHistogramAvg[histogramIndex]));
+                    f = sqrt(f);
+
+                    fprintf(file, ",\"%f\"", f);
+                }
+                fprintf(file, "\n");
+            }
+        }
+
+        fclose(file);
+    }
+}
+
 // ===================================== Program =====================================
 
 int main(int argc, char** argv)
 {
-    static const size_t c_numHistogramBuckets = 10;
-    static const size_t c_numTests = 1000; // how many times to do the tests, to get average and std dev
-
-    // what points in the input stream to dump a report
-    static const size_t c_reportValues[] =
-    {
-        100,
-        1000,
-        10000
-    };
-    static const size_t c_numReportValues = COUNT_OF(c_reportValues);
-    static const size_t c_maxReportValue = c_reportValues[c_numReportValues - 1];
-
-    struct TestReportItem
-    {
-        std::array<float, c_numHistogramBuckets> outputHistogram;
-        std::array<float, c_numHistogramBuckets> outputHistogramAvg;
-        std::array<float, c_numHistogramBuckets> outputHistogramSqdAvg;
-
-        float survivedError;
-        float survivedErrorAvg;
-        float survivedErrorSqdAvg;
-    };
-
-    struct TestReport
-    {
-        std::array<TestReportItem, c_numReportValues> item;
-        std::string inputStreamType;
-        std::string rngStreamType;
-    };
-
     // Test 1 "simple transformation" - uniform to y=x+0.1
     {
         std::vector<TestReport> testReports;
@@ -238,15 +401,15 @@ int main(int argc, char** argv)
 
             for (int testIndex = 0; testIndex < c_numTests; ++testIndex)
             {
-                // get white noise random number generator
-                std::mt19937 rng = GetRNG(i * c_numTests + testIndex);
-                std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-
                 // report percentage done
-                int newPercent = int(100.0f * float((i * c_numTests) + testIndex) / float(c_numTests * 4));
+                int newPercent = int(100.0f * float((i * c_numTests) + testIndex) / float(c_numTests * 6));
                 if (percent != newPercent)
                     printf("\r%i%%", newPercent);
                 percent = newPercent;
+
+                // get white noise random number generator
+                std::mt19937 rng = GetRNG(i * c_numTests + testIndex);
+                std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 
                 std::vector<Vec2> inputAndRngStream(c_maxReportValue);
 
@@ -369,163 +532,7 @@ int main(int argc, char** argv)
         printf("\r100%%\n\n");
 
         // write out report CSVs
-        {
-            // show the survival error
-            {
-                FILE* file = nullptr;
-                fopen_s(&file, "out/test1_survival.csv", "w+t");
-
-                // Show the error
-                {
-                    fprintf(file, "\"Counts\"");
-                    for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
-                        fprintf(file, ",\"%zu\"", c_reportValues[reportIndex]);
-                    fprintf(file, "\n");
-
-                    for (TestReport& report : testReports)
-                    {
-                        fprintf(file, "\"stream %s rng %s error\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
-                        for (TestReportItem& item : report.item)
-                            fprintf(file, ",\"%f\"", abs(item.survivedError));
-                        fprintf(file, "\n");
-                    }
-                }
-
-                // Show the average error
-                {
-                    fprintf(file, "\n\"Average Error\"\n\n\"Counts\"");
-                    for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
-                        fprintf(file, ",\"%zu\"", c_reportValues[reportIndex]);
-                    fprintf(file, "\n");
-
-                    for (TestReport& report : testReports)
-                    {
-                        fprintf(file, "\"stream %s rng %s error\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
-                        for (TestReportItem& item : report.item)
-                            fprintf(file, ",\"%f\"", abs(item.survivedErrorAvg));
-                        fprintf(file, "\n");
-                    }
-                }
-
-                // Show the error std dev
-                {
-                    fprintf(file, "\n\"Error Std Dev\"\n\n\"Counts\"");
-                    for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
-                        fprintf(file, ",\"%zu\"", c_reportValues[reportIndex]);
-                    fprintf(file, "\n");
-
-                    for (TestReport& report : testReports)
-                    {
-                        fprintf(file, "\"stream %s rng %s error\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
-                        for (TestReportItem& item : report.item)
-                        {
-                            float variance = abs(item.survivedErrorSqdAvg - item.survivedErrorAvg * item.survivedErrorAvg);
-                            float stddev = sqrt(variance);
-                            fprintf(file, ",\"%f\"", stddev);
-                        }
-                        fprintf(file, "\n");
-                    }
-                }
-
-                fclose(file);
-            }
-
-            // show the histograms
-            for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
-            {
-                char buffer[256];
-                sprintf_s(buffer, "out/test1_%i.csv", int(c_reportValues[reportIndex]));
-
-                FILE* file = nullptr;
-                fopen_s(&file, buffer, "w+t");
-
-                // show actual histogram
-                {
-                    fprintf(file, "\"expected\"");
-                    for (size_t histogramIndex = 0; histogramIndex < c_numHistogramBuckets; ++histogramIndex)
-                    {
-                        float x1 = float(histogramIndex) / float(c_numHistogramBuckets);
-                        float x2 = float(histogramIndex + 1) / float(c_numHistogramBuckets);
-                        float expected = PDF::Y_Eq_X_P_0_1::CumulativePF(x1, x2) / PDF::Y_Eq_X_P_0_1::CumulativePF(0.0f, 1.0f);
-
-                        fprintf(file, ",\"%f\"", expected);
-                    }
-                    fprintf(file, "\n");
-
-                    for (TestReport& report : testReports)
-                    {
-                        fprintf(file, "\"stream %s rng %s\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
-                        for (float f : report.item[reportIndex].outputHistogram)
-                            fprintf(file, ",\"%f\"", f);
-                        fprintf(file, "\n");
-                    }
-                }
-
-                // show histogram error
-                {
-                    fprintf(file, "\n\"Error\"\n\n");
-
-                    for (TestReport& report : testReports)
-                    {
-                        fprintf(file, "\"stream %s rng %s\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
-                        for (size_t histogramIndex = 0; histogramIndex < c_numHistogramBuckets; ++histogramIndex)
-                        {
-                            float x1 = float(histogramIndex) / float(c_numHistogramBuckets);
-                            float x2 = float(histogramIndex + 1) / float(c_numHistogramBuckets);
-                            float expected = PDF::Y_Eq_X_P_0_1::CumulativePF(x1, x2) / PDF::Y_Eq_X_P_0_1::CumulativePF(0.0f, 1.0f);
-
-                            float f = report.item[reportIndex].outputHistogram[histogramIndex] - expected;
-                            fprintf(file, ",\"%f\"", f);
-                        }
-                        fprintf(file, "\n");
-                    }
-                }
-
-                // show histogram average error
-                {
-                    fprintf(file, "\n\"Average Error\"\n\n");
-
-                    for (TestReport& report : testReports)
-                    {
-                        fprintf(file, "\"stream %s rng %s\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
-                        for (size_t histogramIndex = 0; histogramIndex < c_numHistogramBuckets; ++histogramIndex)
-                        {
-                            float x1 = float(histogramIndex) / float(c_numHistogramBuckets);
-                            float x2 = float(histogramIndex + 1) / float(c_numHistogramBuckets);
-                            float expected = PDF::Y_Eq_X_P_0_1::CumulativePF(x1, x2) / PDF::Y_Eq_X_P_0_1::CumulativePF(0.0f, 1.0f);
-
-                            float f = report.item[reportIndex].outputHistogramAvg[histogramIndex] - expected;
-                            fprintf(file, ",\"%f\"", f);
-                        }
-                        fprintf(file, "\n");
-                    }
-                }
-
-                // show histogram error std dev
-                {
-                    fprintf(file, "\n\"Error Std Deviation\"\n\n");
-
-                    for (TestReport& report : testReports)
-                    {
-                        fprintf(file, "\"stream %s rng %s\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
-                        for (size_t histogramIndex = 0; histogramIndex < c_numHistogramBuckets; ++histogramIndex)
-                        {
-                            float x1 = float(histogramIndex) / float(c_numHistogramBuckets);
-                            float x2 = float(histogramIndex + 1) / float(c_numHistogramBuckets);
-                            float expected = PDF::Y_Eq_X_P_0_1::CumulativePF(x1, x2) / PDF::Y_Eq_X_P_0_1::CumulativePF(0.0f, 1.0f);
-
-                            float f = abs(report.item[reportIndex].outputHistogramSqdAvg[histogramIndex] - (report.item[reportIndex].outputHistogramAvg[histogramIndex] * report.item[reportIndex].outputHistogramAvg[histogramIndex]));
-                            f = sqrt(f);
-
-                            fprintf(file, ",\"%f\"", f);
-                        }
-                        fprintf(file, "\n");
-                    }
-                }
-
-                fclose(file);
-            }
-        }
+        SaveTestReport<PDF::Y_Eq_X_P_0_1>(testReports, "out/test1");
     }
 
     system("pause");
