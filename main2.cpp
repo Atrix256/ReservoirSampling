@@ -15,7 +15,7 @@ static int FloatToItem(float f, int numItems)
     return std::min(int(f * float(numItems)), numItems - 1);
 }
 
-int main(int argc, char **argv)
+int main2(int argc, char **argv)
 {
     // PDF is for x in [0,1]
     auto PDF = [](float x)

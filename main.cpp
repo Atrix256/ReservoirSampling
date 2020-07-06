@@ -27,6 +27,8 @@ enum SeedContext : int
     ReservoirSampling = 2
 };
 
+void RejectionSamplingMain(void);
+
 // ===================================== PDFs =====================================
 
 /*
@@ -69,7 +71,7 @@ namespace PDF
 
         static float CDF(float x)
         {
-            // y = 1 integrates to y = x
+            // PDF integrates to y = x
             return x;
         }
     };
@@ -100,8 +102,70 @@ namespace PDF
 
         static float CDF(float x)
         {
-            // y=2x integrates to y=x^2
+            // PDF integrates to y=x^2
             return x * x;
+        }
+    };
+
+    struct Y_Equals_1_Minus_X
+    {
+        static const char* Label()
+        {
+            return "y=1-x";
+        }
+
+        static const char* FileLabel()
+        {
+            return "yeq1minx";
+        }
+
+        static float PDF(float x)
+        {
+            // y=1-x normalizes to y=2(1-x)
+            return 2.0f * (1.0f - x);
+        }
+
+        static float PF(float x)
+        {
+            // probability function can be y=1-x
+            return (1-x);
+        }
+
+        static float CDF(float x)
+        {
+            // PDF integrates to y=2x-x^2
+            return 2.0f * x - x * x;
+        }
+    };
+
+    struct Y_Equals_X_Minus_X_squared
+    {
+        static const char* Label()
+        {
+            return "y=x-x^2";
+        }
+
+        static const char* FileLabel()
+        {
+            return "yeqxminxsq";
+        }
+
+        static float PDF(float x)
+        {
+            // y=x normalizes to y=6*(x-x^2)
+            return 6.0f * (x - x * x);
+        }
+
+        static float PF(float x)
+        {
+            // probability function can be y=4*(x-x^2)
+            return 4.0f * (x - x * x);
+        }
+
+        static float CDF(float x)
+        {
+            // PDF integrates to y=3x^2-2x^3
+            return 3.0f * x * x - 2.0f * x * x * x;
         }
     };
 };
@@ -398,11 +462,40 @@ void TestRejectionSampling()
     }
 }
 
-int main2(int argc, char **argv)
+void TestRejectionSamplingFull()
 {
-    // TODO: uncomment
+    /*
+        Test 1 - uniform pdf -> rejected sampled to -> y=2x pdf
+         00 -> white noise as input, white noise rng 
+         01 -> white noise as input, LDS rng
+         10 -> LDS as input, white noise as rng
+         11 -> LDS as input, LDS as rng.
+        ! do this multiple times, show error and variance of histogram. at different sample counts too.
+
+        Test 2 & 3 - different input and output pdfs
+    */
+
+    // Test 1 - uniform PDF to y=2x pdf
+    {
+        
+    }
+
+
+
+    // TODO: maybe have it like... make a white noise stream here. make a function to rejection sample it to some other PDF (using white vs LDS). report histograms. do other tests.
+
     //TestRejectionSampling<PDF::Y_Equals_X>();
     //TestRejectionSampling<PDF::Uniform>();
+}
+
+int main(int argc, char **argv)
+{
+    RejectionSamplingMain();
+
+    TestRejectionSamplingFull();
+    return 0;
+
+    // TODO: continue this later
 
     {
         std::vector<float> samplesWhite = RejectionSample<Seq::WhiteNoise2D, PDF::Uniform>(10000);
@@ -438,7 +531,15 @@ int main2(int argc, char **argv)
 
 ================= REFOCUSING - WHAT ARE WE DOING? ==================
 
-? can we make correlation / anti correlation be part of the output results in either of these somehow?
+
+
+----- unweighted single reservoir sampling?
+
+! experiment:
+ * do this N times. look at a histogram of those N.  The item at index N is the value N, so can make a histogram of the samples to show that they are evenly spaced.
+ * compare white noise vs LDS. LDS should be more flat.
+ * do that comparison at various times during the N.
+ * also vary how many source sample count? imperfect memory? or no?
 
 ----- unweighted reservoir sampling.  take N samples with even chance from a larger stream
 
@@ -446,6 +547,12 @@ int main2(int argc, char **argv)
 * use LDS to make sure this is true
 * could do the tests multiple times and take average / std dev of it.
 * different techniques like imperfect memory
+
+! experiment:
+ * each time you do this you get a histogram.
+ * do this N times for N histograms, show error and variance
+ * compare white noise vs LDS. LDS should be less error and less variance.
+ * vary source sample count and imperfect memory.
 
 ----- weighted reservoir sampling. take N samples with weighted chance from a larger stream. also: convert a stream of a PDF to another (maybe not the best algorithm though)
 
@@ -468,6 +575,13 @@ int main2(int argc, char **argv)
 ? how does this idea compare conceptually to rejection sampling or russian roulette?
 ? do we really want N items selected? or do we want to spit out a stream of output for a given input?
 ! this may not be the best way to launder PDFs
+
+! experiment:
+ * each time you do this you get a histogram.
+ * do this N times for N histograms, show error and variance
+ * compare white noise vs LDS. LDS should be less error and less variance.
+ * vary source sample count and imperfect memory.
+ * try with various input and output pdfs
 
 ====================================================================
 
@@ -565,9 +679,17 @@ Note:
 * unsure if I'm using LDS in ReservoirSample() correctly. we use the second value only conditionally. could be a second 1d stream maybe? not real sure.
 
 BLOG:
-* weighted reservoir sampling with replacement.
+* weighted reservoir sampling with replacement.  https://blog.plover.com/prog/weighted-reservoir-sampling.html
+ * https://en.wikipedia.org/wiki/Reservoir_sampling#Algorithm_A-Chao
 * also just rejection sampling, as a lesser thing?
 * twitter thread on transmuting a PDF: https://twitter.com/CasualEffects/status/1277748266709508102?s=20
 * this video and the other which takes it to multiple samples: https://www.youtube.com/watch?v=A1iwzSew5QY
+
+* Mention how fpe can randomly select N indices out of M total, without replacement.
+ * You could repeat items to get rational weighting but mapping result to index would be hard
+
+! for color of noise, just sort for energy function
+ * is there other ways? like part of the weighting could be the distance from existing samples.
+
 
 */
