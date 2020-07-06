@@ -42,8 +42,7 @@ namespace PDF
         // Returns a probability 0 to 1 for this value.
         static float PF(float x)
         {
-            constexpr Vec2 MinMax = T::FuncMinMax();
-            return T::Func(x) / MinMax[1];
+            return T::Func(x) / T::FuncMax();
         }
 
         // Cumulative Probability Function
@@ -53,18 +52,7 @@ namespace PDF
         // also useful for figuring out how many samples should survive rejection sampling.
         static float CumulativePF(float x1, float x2)
         {
-            constexpr Vec2 MinMax = T::FuncMinMax();
-            return (T::IntegratedFunc(x2) - T::IntegratedFunc(x1)) / MinMax[1];
-        }
-
-        // Inverse Probability Function
-        //
-        // If you want to "undo" a transformation to a pdf, you need the inverse
-        // of the probability function.  This is that.
-        static float InversePF(float x)
-        {
-            constexpr Vec2 MinMax = T::FuncMinMax();
-            return MinMax[0] / T::Func(x);
+            return (T::IntegratedFunc(x2) - T::IntegratedFunc(x1)) / T::FuncMax();
         }
 
         // structs that derive from this class should have these functions:
@@ -72,9 +60,9 @@ namespace PDF
         // A function that takes in an x value 0 to 1 and returns a value. Higher values are more probable.
         //static constexpr float Func(float x)
 
-        // The minimum and maximum value that func can return between 0 and 1.
-        // Useful for normalizing Func, it's inverse, and cumulative PF.
-        //static constexpr Vec2 FuncMinMax()
+        // The maximum that func can return between 0 and 1.
+        // Useful for normalizing Func and cumulative PF.
+        //static constexpr float FuncMax()
 
         // indefinite integral of Func()
         //static constexpr float IntegratedFunc(float x)
@@ -83,22 +71,66 @@ namespace PDF
     // y = x+0.1
     struct Y_Eq_X_P_0_1 : public PDF::Base<Y_Eq_X_P_0_1>
     {
-    private:
-        friend PDF::Base<Y_Eq_X_P_0_1>;
-
         static constexpr float Func(float x)  
         {
             return x + 0.1f;
         }
 
-        static constexpr Vec2 FuncMinMax()
+        static constexpr float FuncMax()
         {
-            return Vec2{ 0.1f, 1.1f };
+            return 1.1f;
         }
 
         static constexpr float IntegratedFunc(float x)
         {
             return 0.5f * x * x + 0.1f * x;
+        }
+    };
+
+    // y = x - x^2 + 0.1
+    struct Y_Eq_X_Min_XSq_P_0_1 : public PDF::Base<Y_Eq_X_Min_XSq_P_0_1>
+    {
+        static constexpr float Func(float x)
+        {
+            return x - x * x + 0.1f;
+        }
+
+        static constexpr float FuncMax()
+        {
+            return 0.35f;
+        }
+
+        // y = -1/3 * x^3 + 1/2 * x^2 + 0.1 * x
+        static constexpr float IntegratedFunc(float x)
+        {
+            return -(1.0f / 3.0f) * x * x * x + 0.5f * x * x + 0.1f * x;
+        }
+    };
+
+    // Combining two PDFs into a single step:
+    // 1) y = x + 0.1
+    // 2) y = x - x^2 + 0.1
+    // Multiply them together to get result:
+    // y = -x^3 + 0.9x^2 + 0.2x + 0.01
+    struct Combined : public PDF::Base<Combined>
+    {
+        static constexpr float Func(float x)
+        {
+            return -x * x*x + 0.9f *x*x + 0.2f * x + 0.01f;
+        }
+
+        static constexpr float FuncMax()
+        {
+            return 0.25f;
+        }
+
+        // y = -0.25 * x^4 + 0.3 * x^3 + 0.1 * x^2 + 0.01 * x
+        static constexpr float IntegratedFunc(float x)
+        {
+            return -0.25f * x * x * x * x
+                   + 0.3f * x * x * x
+                   + 0.1f * x * x
+                   + 0.01f * x;
         }
     };
 };
@@ -521,6 +553,7 @@ void GenerateSequence(std::vector<float>& inputStream, std::vector<float>& rngSt
 int main(int argc, char** argv)
 {
     // Test 1 "simple transformation" - uniform to y=x+0.1
+    // To show basic behavior
     {
         std::vector<TestReport> testReports;
 
@@ -565,8 +598,110 @@ int main(int argc, char** argv)
         SaveTestReport<PDF::Y_Eq_X_P_0_1>(testReports, "out/test1");
     }
 
-    // TODO: test 2 is to do a multi step PDF transformation
-    // TODO: test 3 is to combine the multiple steps into 1 to show survival rate etc
+    // Test 2 "2 step transformation" - uniform to y=x+0.1 to y=x-x^2+0.1
+    // To show that the histogram doesn't transform properly if you don't do uniform in.
+    {
+        std::vector<TestReport> testReports;
+
+        int flatTestIndex = -1;
+        int percent = 0;
+        printf("Test 2: uniform to y=x+0.1 to x-x^2+0.1\n");
+        for (int sequenceType = 0; sequenceType < ESequenceType::Count; ++sequenceType)
+        {
+            // get a test report to store data to report later
+            testReports.emplace_back();
+            TestReport& report = testReports.back();
+
+            for (int testIndex = 0; testIndex < c_numTests; ++testIndex)
+            {
+                flatTestIndex++;
+
+                // report percentage done
+                int newPercent = int(100.0f * float(flatTestIndex) / float(c_numTests * ESequenceType::Count));
+                if (percent != newPercent)
+                    printf("\r%i%%", newPercent);
+                percent = newPercent;
+
+                // get white noise random number generator
+                std::mt19937 rng = GetRNG(flatTestIndex);
+                std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+
+                // Generate the input stream and rng stream
+                Vec2 LDSOffset = Vec2{ 0.0f, 0.0f };
+                #if RANDOMIZE_LDS_START()
+                LDSOffset = Vec2{ dist(rng), dist(rng) };
+                #endif
+                std::vector<float> inputStream, rngStream;
+                GenerateSequence(inputStream, rngStream, c_maxReportValue, (ESequenceType)sequenceType, rng, report, LDSOffset);
+
+                // Do rejection sampling to convert from uniform to y=x+0.1
+                TestReport dummyReport;
+                std::vector<float> transformed = RejectionSample<PDF::Y_Eq_X_P_0_1>(inputStream, rngStream, dummyReport, testIndex);
+
+                // generate more rng sequence for the next step
+                std::vector<float> dummyInputStream;
+                GenerateSequence(dummyInputStream, rngStream, transformed.size(), (ESequenceType)sequenceType, rng, report, LDSOffset);
+
+                // rejection sample to apply y=x-x^2+0.1
+                transformed = RejectionSample<PDF::Y_Eq_X_Min_XSq_P_0_1>(transformed, rngStream, report, testIndex);
+            }
+        }
+        printf("\r100%%\n\n");
+
+        // write out report CSVs
+        SaveTestReport<PDF::Y_Eq_X_Min_XSq_P_0_1>(testReports, "out/test2");
+    }
+
+    // Test 3 "2 step transformation in one step" - uniform to y=x+0.1 to y=x-x^2+0.1 in a conjoined PDF
+    // To show that combining them works, and is more efficient
+    {
+        std::vector<TestReport> testReports;
+
+        int flatTestIndex = -1;
+        int percent = 0;
+        printf("Test 3: uniform to y=x+0.1 to x-x^2+0.1 in 1 step (math)\n");
+        for (int sequenceType = 0; sequenceType < ESequenceType::Count; ++sequenceType)
+        {
+            // get a test report to store data to report later
+            testReports.emplace_back();
+            TestReport& report = testReports.back();
+
+            for (int testIndex = 0; testIndex < c_numTests; ++testIndex)
+            {
+                flatTestIndex++;
+
+                // report percentage done
+                int newPercent = int(100.0f * float(flatTestIndex) / float(c_numTests * ESequenceType::Count));
+                if (percent != newPercent)
+                    printf("\r%i%%", newPercent);
+                percent = newPercent;
+
+                // get white noise random number generator
+                std::mt19937 rng = GetRNG(flatTestIndex);
+                std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+
+                // Generate the input stream and rng stream
+                Vec2 LDSOffset = Vec2{ 0.0f, 0.0f };
+                #if RANDOMIZE_LDS_START()
+                LDSOffset = Vec2{ dist(rng), dist(rng) };
+                #endif
+                std::vector<float> inputStream, rngStream;
+                GenerateSequence(inputStream, rngStream, c_maxReportValue, (ESequenceType)sequenceType, rng, report, LDSOffset);
+
+                // Do rejection sampling to convert from uniform
+                std::vector<float> transformed = RejectionSample<PDF::Combined>(inputStream, rngStream, report, testIndex);
+            }
+        }
+        printf("\r100%%\n\n");
+
+        // write out report CSVs
+        SaveTestReport<PDF::Combined>(testReports, "out/test3");
+    }
+
+    // TODO: now that we aren't inverting anything, remove the + 0.1 from functions
+    // TODO: have survival show actual survived sample count? i can't tell from error...
+    // TODO: with a dummy report, we aren't getting the real number of rejections and stuff. should try and fix that
+    // TODO: do an inverse test to make it go back to uniform?
 
     system("pause");
     return 0;
@@ -581,6 +716,9 @@ int main(int argc, char** argv)
 - transmutting one pdf or pmf to another by throwing samples away.
  * you use a probability function, not pdf or pmf. difference is in normalization. PF has at most 1.0, but can be smaller.
   * want to minimize the count you throw away though.
+ * Test talk
+  * Test 1 - ??
+  * Test 2 - no 10k graph cause there aren't that many survivors!
  * could talk about how to make PDF's and PMFs from formulas
  * Full deterministic LDS has bad average error, because others have non deterministic error so will sometimes be higher or lower and over time will average to zero. FULL LDS is stuck at one sample.
  * maybe show the randomized LDS results, and also mention how you'd probably want a different LDS driving the LDS starting values instead :P
