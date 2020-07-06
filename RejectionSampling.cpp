@@ -68,55 +68,31 @@ namespace PDF
         //static constexpr float IntegratedFunc(float x)
     };
 
-    // y = x+0.1
-    struct Y_Eq_X_P_0_1 : public PDF::Base<Y_Eq_X_P_0_1>
+    // y = x
+    struct Y_Eq_X : public PDF::Base<Y_Eq_X>
     {
         static constexpr float Func(float x)  
         {
-            return x + 0.1f;
+            return x;
         }
 
         static constexpr float FuncMax()
         {
-            return 1.1f;
+            return 1.0f;
         }
 
         static constexpr float IntegratedFunc(float x)
         {
-            return 0.5f * x * x + 0.1f * x;
+            return 0.5f * x * x;
         }
     };
 
-    // y = x - x^2 + 0.1
-    struct Y_Eq_X_Min_XSq_P_0_1 : public PDF::Base<Y_Eq_X_Min_XSq_P_0_1>
+    // y = x - x^2
+    struct Y_Eq_X_Min_XSq : public PDF::Base<Y_Eq_X_Min_XSq>
     {
         static constexpr float Func(float x)
         {
-            return x - x * x + 0.1f;
-        }
-
-        static constexpr float FuncMax()
-        {
-            return 0.35f;
-        }
-
-        // y = -1/3 * x^3 + 1/2 * x^2 + 0.1 * x
-        static constexpr float IntegratedFunc(float x)
-        {
-            return -(1.0f / 3.0f) * x * x * x + 0.5f * x * x + 0.1f * x;
-        }
-    };
-
-    // Combining two PDFs into a single step:
-    // 1) y = x + 0.1
-    // 2) y = x - x^2 + 0.1
-    // Multiply them together to get result:
-    // y = -x^3 + 0.9x^2 + 0.2x + 0.01
-    struct Combined : public PDF::Base<Combined>
-    {
-        static constexpr float Func(float x)
-        {
-            return -x * x*x + 0.9f *x*x + 0.2f * x + 0.01f;
+            return x - x * x;
         }
 
         static constexpr float FuncMax()
@@ -124,13 +100,34 @@ namespace PDF
             return 0.25f;
         }
 
-        // y = -0.25 * x^4 + 0.3 * x^3 + 0.1 * x^2 + 0.01 * x
+        // y = x^2 / 2 - x^3 / 3
         static constexpr float IntegratedFunc(float x)
         {
-            return -0.25f * x * x * x * x
-                   + 0.3f * x * x * x
-                   + 0.1f * x * x
-                   + 0.01f * x;
+            return (x*x) / 2.0f - (x*x*x) / 3.0f;
+        }
+    };
+
+    // Combining two PDFs into a single step:
+    // 1) y = x
+    // 2) y = x - x^2
+    // Multiply them together to get result:
+    // y = x^2 - x^3
+    struct Combined : public PDF::Base<Combined>
+    {
+        static constexpr float Func(float x)
+        {
+            return x * x - x * x*x;
+        }
+
+        static constexpr float FuncMax()
+        {
+            return 0.15f;
+        }
+
+        // y = x^3 / 3 - x^4 / 4
+        static constexpr float IntegratedFunc(float x)
+        {
+            return x * x * x / 3.0f - x * x * x * x / 4.0f;
         }
     };
 };
@@ -552,14 +549,14 @@ void GenerateSequence(std::vector<float>& inputStream, std::vector<float>& rngSt
 
 int main(int argc, char** argv)
 {
-    // Test 1 "simple transformation" - uniform to y=x+0.1
+    // Test 1 "simple transformation" - uniform to y=x
     // To show basic behavior
     {
         std::vector<TestReport> testReports;
 
         int flatTestIndex = -1;
         int percent = 0;
-        printf("Test 1: uniform to y=x+0.1\n");
+        printf("Test 1: uniform to y=x\n");
         for (int sequenceType = 0; sequenceType < ESequenceType::Count; ++sequenceType)
         {
             // get a test report to store data to report later
@@ -588,24 +585,24 @@ int main(int argc, char** argv)
                 std::vector<float> inputStream, rngStream;
                 GenerateSequence(inputStream, rngStream, c_maxReportValue, (ESequenceType)sequenceType, rng, report, LDSOffset);
 
-                // Do rejection sampling to convert from uniform to y=x+0.1
-                std::vector<float> transformed = RejectionSample<PDF::Y_Eq_X_P_0_1>(inputStream, rngStream, report, testIndex);
+                // Do rejection sampling to convert from uniform to y=x
+                std::vector<float> transformed = RejectionSample<PDF::Y_Eq_X>(inputStream, rngStream, report, testIndex);
             }
         }
         printf("\r100%%\n\n");
 
         // write out report CSVs
-        SaveTestReport<PDF::Y_Eq_X_P_0_1>(testReports, "out/test1");
+        SaveTestReport<PDF::Y_Eq_X>(testReports, "out/test1");
     }
 
-    // Test 2 "2 step transformation" - uniform to y=x+0.1 to y=x-x^2+0.1
+    // Test 2 "2 step transformation" - uniform to y=x to y=x-x^2
     // To show that the histogram doesn't transform properly if you don't do uniform in.
     {
         std::vector<TestReport> testReports;
 
         int flatTestIndex = -1;
         int percent = 0;
-        printf("Test 2: uniform to y=x+0.1 to x-x^2+0.1\n");
+        printf("Test 2: uniform to y=x to x-x^2\n");
         for (int sequenceType = 0; sequenceType < ESequenceType::Count; ++sequenceType)
         {
             // get a test report to store data to report later
@@ -634,32 +631,32 @@ int main(int argc, char** argv)
                 std::vector<float> inputStream, rngStream;
                 GenerateSequence(inputStream, rngStream, c_maxReportValue, (ESequenceType)sequenceType, rng, report, LDSOffset);
 
-                // Do rejection sampling to convert from uniform to y=x+0.1
+                // Do rejection sampling to convert from uniform to y=x
                 TestReport dummyReport;
-                std::vector<float> transformed = RejectionSample<PDF::Y_Eq_X_P_0_1>(inputStream, rngStream, dummyReport, testIndex);
+                std::vector<float> transformed = RejectionSample<PDF::Y_Eq_X>(inputStream, rngStream, dummyReport, testIndex);
 
                 // generate more rng sequence for the next step
                 std::vector<float> dummyInputStream;
                 GenerateSequence(dummyInputStream, rngStream, transformed.size(), (ESequenceType)sequenceType, rng, report, LDSOffset);
 
-                // rejection sample to apply y=x-x^2+0.1
-                transformed = RejectionSample<PDF::Y_Eq_X_Min_XSq_P_0_1>(transformed, rngStream, report, testIndex);
+                // rejection sample to apply y=x-x^2
+                transformed = RejectionSample<PDF::Y_Eq_X_Min_XSq>(transformed, rngStream, report, testIndex);
             }
         }
         printf("\r100%%\n\n");
 
         // write out report CSVs
-        SaveTestReport<PDF::Y_Eq_X_Min_XSq_P_0_1>(testReports, "out/test2");
+        SaveTestReport<PDF::Y_Eq_X_Min_XSq>(testReports, "out/test2");
     }
 
-    // Test 3 "2 step transformation in one step" - uniform to y=x+0.1 to y=x-x^2+0.1 in a conjoined PDF
+    // Test 3 "2 step transformation in one step" - uniform to y=x to y=x-x^2 in a conjoined PDF
     // To show that combining them works, and is more efficient
     {
         std::vector<TestReport> testReports;
 
         int flatTestIndex = -1;
         int percent = 0;
-        printf("Test 3: uniform to y=x+0.1 to x-x^2+0.1 in 1 step (math)\n");
+        printf("Test 3: uniform to y=x to x-x^2 in 1 step (math)\n");
         for (int sequenceType = 0; sequenceType < ESequenceType::Count; ++sequenceType)
         {
             // get a test report to store data to report later
@@ -698,8 +695,7 @@ int main(int argc, char** argv)
         SaveTestReport<PDF::Combined>(testReports, "out/test3");
     }
 
-    // TODO: now that we aren't inverting anything, remove the + 0.1 from functions
-    // TODO: have survival show actual survived sample count? i can't tell from error...
+    // TODO: have survival show actual survived sample count? i can't tell from error how many actually survived
     // TODO: with a dummy report, we aren't getting the real number of rejections and stuff. should try and fix that
     // TODO: do an inverse test to make it go back to uniform?
 
