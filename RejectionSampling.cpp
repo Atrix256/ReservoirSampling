@@ -239,6 +239,10 @@ struct TestReportItem
     std::array<float, c_numHistogramBuckets> outputHistogramAvg;
     std::array<float, c_numHistogramBuckets> outputHistogramSqdAvg;
 
+    float survived;
+    float survivedAvg;
+    float survivedSqdAvg;
+
     float survivedError;
     float survivedErrorAvg;
     float survivedErrorSqdAvg;
@@ -262,9 +266,64 @@ void SaveTestReport(const std::vector<TestReport>& testReports, const char* base
         sprintf_s(buffer, "%s_survival.csv", baseFileName);
         fopen_s(&file, buffer, "w+t");
 
+        // show an actual survival percentage
+        {
+            fprintf(file, "\"Survival Percent\"\n\n\"Counts\"");
+            for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
+                fprintf(file, ",\"%zu\"", c_reportValues[reportIndex]);
+            fprintf(file, "\n\"Expected\"");
+            for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
+                fprintf(file, ",\"%f\"", PDF::CumulativePF(0.0f, 1.0f));
+            fprintf(file, "\n");
+
+            for (const TestReport& report : testReports)
+            {
+                fprintf(file, "\"stream %s rng %s error\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
+                for (const TestReportItem& item : report.item)
+                    fprintf(file, ",\"%f\"", item.survived);
+                fprintf(file, "\n");
+            }
+        }
+
+        // show average survival percentage
+        {
+            fprintf(file, "\n\"Average Survival Percent\"\n\n\"Counts\"");
+            for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
+                fprintf(file, ",\"%zu\"", c_reportValues[reportIndex]);
+            fprintf(file, "\n");
+
+            for (const TestReport& report : testReports)
+            {
+                fprintf(file, "\"stream %s rng %s error\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
+                for (const TestReportItem& item : report.item)
+                    fprintf(file, ",\"%f\"", item.survivedAvg);
+                fprintf(file, "\n");
+            }
+        }
+
+        // show survival percentage std dev
+        {
+            fprintf(file, "\n\"Survival Percent Std Dev\"\n\n\"Counts\"");
+            for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
+                fprintf(file, ",\"%zu\"", c_reportValues[reportIndex]);
+            fprintf(file, "\n");
+
+            for (const TestReport& report : testReports)
+            {
+                fprintf(file, "\"stream %s rng %s error\"", report.inputStreamType.c_str(), report.rngStreamType.c_str());
+                for (const TestReportItem& item : report.item)
+                {
+                    float var = abs(item.survivedSqdAvg - (item.survivedAvg*item.survivedAvg));
+                    float stddev = sqrt(var);
+                    fprintf(file, ",\"%f\"", stddev);
+                }
+                fprintf(file, "\n");
+            }
+        }
+
         // Show the error
         {
-            fprintf(file, "\"Counts\"");
+            fprintf(file, "\n\"Error\"\n\n\"Counts\"");
             for (int reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
                 fprintf(file, ",\"%zu\"", c_reportValues[reportIndex]);
             fprintf(file, "\n");
@@ -429,9 +488,14 @@ std::vector<float> RejectionSample(const std::vector<float>& inputStream, const 
             {
                 float alpha = 1.0f / float(testIndex + 1);
 
-                // calculate the error of survival rate
-                float survivedPercent = float(transformed.size()) / float(c_reportValues[reportIndex]);
+                // store the survival numbers
                 float survivedPercentExpected = PDF::CumulativePF(0.0f, 1.0f);
+                float survivedPercent = float(transformed.size()) / float(c_reportValues[reportIndex]);
+                report.item[reportIndex].survived = survivedPercent;
+                report.item[reportIndex].survivedAvg = Lerp(report.item[reportIndex].survivedAvg, survivedPercent, alpha);
+                report.item[reportIndex].survivedSqdAvg = Lerp(report.item[reportIndex].survivedSqdAvg, survivedPercent*survivedPercent, alpha);
+
+                // calculate the error of survival rate
                 report.item[reportIndex].survivedError = survivedPercent - survivedPercentExpected;
 
                 // calculate the avg and squared avg of survival rate
@@ -695,9 +759,8 @@ int main(int argc, char** argv)
         SaveTestReport<PDF::Combined>(testReports, "out/test3");
     }
 
-    // TODO: have survival show actual survived sample count? i can't tell from error how many actually survived
-    // TODO: with a dummy report, we aren't getting the real number of rejections and stuff. should try and fix that
-    // TODO: do an inverse test to make it go back to uniform?
+    // TODO: with a dummy report, we aren't getting the real number of rejections and stuff. should try and fix that? maybe 
+    // TODO: do we need any more PDF tests? should we do PMF too or just talk about it in the post? probably just talk about it i guess
 
     system("pause");
     return 0;
