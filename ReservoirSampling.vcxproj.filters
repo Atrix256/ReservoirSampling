@@ -4,5 +4,6 @@
     <ClCompile Include="RejectionSampling.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="main2.cpp" />
+    <ClCompile Include="NewRejectionSampling.cpp" />
   </ItemGroup>
 </Project>
