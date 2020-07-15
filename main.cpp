@@ -692,4 +692,10 @@ BLOG:
  * is there other ways? like part of the weighting could be the distance from existing samples.
 
 
+also, toss this into the queue. "guide tables". slower than alias tables, but preserves input sample qualities better.
+https://arxiv.org/abs/1901.05423
+
+and whatever this is
+https://www.quantamagazine.org/how-and-why-computers-roll-loaded-dice-20200708/
+
 */
