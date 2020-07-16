@@ -69,7 +69,12 @@ namespace PDF
             m_rng = GetRNG();
         }
 
-        float Generate()
+        static float PF(float x)
+        {
+            return 1.0f;
+        }
+
+        float Generate(float generatorPFMultiplier)
         {
             std::uniform_real_distribution<float> dist(0.0f, 1.0f);
             return dist(m_rng);
@@ -92,7 +97,12 @@ namespace PDF
             #endif
         }
 
-        float Generate()
+        static float PF(float x)
+        {
+            return 1.0f;
+        }
+
+        float Generate(float generatorPFMultiplier)
         {
             m_value = fract(m_value + c_goldenRatioConjugate);
             return m_value;
@@ -115,7 +125,12 @@ namespace PDF
             #endif
         }
 
-        float Generate()
+        static float PF(float x)
+        {
+            return 1.0f;
+        }
+
+        float Generate(float generatorPFMultiplier)
         {
             m_value = fract(m_value + c_fractRoot2);
             return m_value;
@@ -140,13 +155,13 @@ namespace PDF
             return (2.0f * x + 3.0f) / 5.0f;
         }
 
-        float Generate()
+        float Generate(float generatorPFMultiplier)
         {
             while (true)
             {
-                float x = m_generator.Generate();
-                float probability = PF(x);
-                if (m_validator.Generate() <= probability)
+                float x = m_generator.Generate(1.0f); // doesn't handle nested non-uniform PDFs but whatever
+                float probability = PF(x) / (Generator::PF(x) * generatorPFMultiplier);
+                if (m_validator.Generate(1.0f) <= probability)
                     return x;
             }
         }
@@ -171,13 +186,13 @@ namespace PDF
             return (x*x*x - 10.0f * x*x + 5.0f * x + 11.0f) / 12.0f;
         }
 
-        float Generate()
+        float Generate(float generatorPFMultiplier)
         {
             while (true)
             {
-                float x = m_generator.Generate();
-                float probability = PF(x);
-                if (m_validator.Generate() <= probability)
+                float x = m_generator.Generate(1.0f); // doesn't handle nested non-uniform PDFs but whatever
+                float probability = PF(x) / (Generator::PF(x) * generatorPFMultiplier);
+                if (m_validator.Generate(1.0f) <= probability)
                     return x;
             }
         }
@@ -190,12 +205,12 @@ namespace PDF
 // ===================================== Code =====================================
 
 template <typename TPDF>
-void GenerateSequence(std::vector<float>& sequence, size_t count)
+void GenerateSequence(std::vector<float>& sequence, size_t count, float generatorPFMultiplier)
 {
     TPDF pdf;
     sequence.resize(count);
     for (float& f : sequence)
-        f = pdf.Generate();
+        f = pdf.Generate(generatorPFMultiplier);
 }
 
 void CalculateHistogram(const std::vector<float>& samples, size_t sampleCount, std::vector<float>& histogram)
@@ -271,10 +286,10 @@ int main(int argc, char ** argv)
         {
             // generate the samples
             std::vector<float> samples[4];
-            GenerateSequence<PDF::Linear<PDF::UniformWhite, PDF::UniformWhite>>(samples[0], c_maxReportValue);
-            GenerateSequence<PDF::Linear<PDF::UniformWhite, PDF::UniformLDS_GR>>(samples[1], c_maxReportValue);
-            GenerateSequence<PDF::Linear<PDF::UniformLDS_Root2, PDF::UniformWhite>>(samples[2], c_maxReportValue);
-            GenerateSequence<PDF::Linear<PDF::UniformLDS_Root2, PDF::UniformLDS_GR>>(samples[3], c_maxReportValue);
+            GenerateSequence<PDF::Linear<PDF::UniformWhite, PDF::UniformWhite>>(samples[0], c_maxReportValue, 1.0f);
+            GenerateSequence<PDF::Linear<PDF::UniformWhite, PDF::UniformLDS_GR>>(samples[1], c_maxReportValue, 1.0f);
+            GenerateSequence<PDF::Linear<PDF::UniformLDS_Root2, PDF::UniformWhite>>(samples[2], c_maxReportValue, 1.0f);
+            GenerateSequence<PDF::Linear<PDF::UniformLDS_Root2, PDF::UniformLDS_GR>>(samples[3], c_maxReportValue, 1.0f);
 
             // calculate data for each report
             for (size_t reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
@@ -366,10 +381,10 @@ int main(int argc, char ** argv)
         {
             // generate the samples
             std::vector<float> samples[4];
-            GenerateSequence<PDF::Cubic<PDF::Linear<PDF::UniformWhite, PDF::UniformWhite>, PDF::UniformWhite>>(samples[0], c_maxReportValue);
-            GenerateSequence<PDF::Cubic<PDF::Linear<PDF::UniformWhite, PDF::UniformLDS_GR>, PDF::UniformLDS_GR>>(samples[1], c_maxReportValue);
-            GenerateSequence<PDF::Cubic<PDF::Linear<PDF::UniformLDS_Root2, PDF::UniformWhite>, PDF::UniformWhite>>(samples[2], c_maxReportValue);
-            GenerateSequence<PDF::Cubic<PDF::Linear<PDF::UniformLDS_Root2, PDF::UniformLDS_GR>, PDF::UniformLDS_GR>>(samples[3], c_maxReportValue);
+            GenerateSequence<PDF::Cubic<PDF::Linear<PDF::UniformWhite, PDF::UniformWhite>, PDF::UniformWhite>>(samples[0], c_maxReportValue, 1.6f);
+            GenerateSequence<PDF::Cubic<PDF::Linear<PDF::UniformWhite, PDF::UniformLDS_GR>, PDF::UniformLDS_GR>>(samples[1], c_maxReportValue, 1.6f);
+            GenerateSequence<PDF::Cubic<PDF::Linear<PDF::UniformLDS_Root2, PDF::UniformWhite>, PDF::UniformWhite>>(samples[2], c_maxReportValue, 1.6f);
+            GenerateSequence<PDF::Cubic<PDF::Linear<PDF::UniformLDS_Root2, PDF::UniformLDS_GR>, PDF::UniformLDS_GR>>(samples[3], c_maxReportValue, 1.6f);
 
             // calculate data for each report
             for (size_t reportIndex = 0; reportIndex < c_numReportValues; ++reportIndex)
@@ -437,8 +452,6 @@ int main(int argc, char ** argv)
             fclose(file);
         }
     }
-
-    // TODO: need to account for source PDF when rejection sampling! make an interface
 
     return 0;
 }
